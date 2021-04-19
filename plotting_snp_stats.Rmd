@@ -1,0 +1,234 @@
+---
+title: "Plotting SNP stats across genome"
+author: "Denise Martini"
+date: "2/27/2019"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Here I will just plot a few stats that I prepared with VCFtools on the SNPs from my whole-genome realignments.
+Loading libraries.
+
+```{r, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+```
+
+First, I will quickly try plotting the non-syn SNPs distribution, from the density windows I have. I am not quite sure of what will come out of it and I am pretty sure that I will need to clean up the input file and get rid of all unplaced scaffolds. But, let's just try.
+
+```{r}
+read.table("../realignment/snpeff/stats/kea_nonsyn.snpden", header = TRUE) -> kea_snpden
+```
+
+Last time I worked on the coordynate system a bit:
+
+```{r}
+snpden <- kea_snpden %>% 
+  
+  # Compute chromosome size
+  group_by(CHROM) %>% 
+  summarise(chr_len=max(BIN_START)) %>% 
+  
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(chr_len)-chr_len) %>%
+  select(-chr_len) %>%
+  
+  # Add this info to the initial dataset
+  left_join(kea_snpden, ., by=c("CHROM"="CHROM")) %>%
+  
+  # Add a cumulative position of each SNP
+  arrange(CHROM, BIN_START) %>%
+  mutate( BPcum=BIN_START+tot)
+```
+
+The labels for the x axis are going to be all weird, but I don't care at the moment.
+Let's plot without worrying about that for now.
+
+```{r}
+ggplot(snpden, aes(x=BPcum, y=VARIANTS.KB)) +
+  
+  # Show all points
+  geom_point( aes(color=as.factor(CHROM)), alpha=0.8, size=1.3) +
+  scale_color_manual(values = rep(c("#FDAE61", "#A6D96A"), 80)) +
+  
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 1.5)) +     # remove space between plot area and x axis
+  scale_x_continuous(breaks=seq(0, 1100000000, 100000000)) +
+  
+  # Custom the theme:
+  theme_bw() +
+  theme( 
+    legend.position="none",
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+ggsave("../realignment/snpeff/stats/nonsyn_distribution_kea.png", width=8, height=4, dpi=300)
+```
+
+It is not the most beautiful plot, but it is fairly evident that there are areas that accumulate more non-synonymous snps than others.
+How different is this plot for the Kaka?
+
+```{r}
+read.table("../realignment/snpeff/stats/kaka_nonsyn.snpden", header = TRUE) -> kaka_snpden
+kaka <- kaka_snpden %>% 
+  
+  # Compute chromosome size
+  group_by(CHROM) %>% 
+  summarise(chr_len=max(BIN_START)) %>% 
+  
+  # Calculate cumulative position of each chromosome
+  mutate(tot=cumsum(chr_len)-chr_len) %>%
+  select(-chr_len) %>%
+  
+  # Add this info to the initial dataset
+  left_join(kaka_snpden, ., by=c("CHROM"="CHROM")) %>%
+  
+  # Add a cumulative position of each SNP
+  arrange(CHROM, BIN_START) %>%
+  mutate( BPcum=BIN_START+tot)
+
+ggplot(kaka, aes(x=BPcum, y=VARIANTS.KB)) +
+  
+  # Show all points
+  geom_point( aes(color=as.factor(CHROM)), alpha=0.8, size=1.3) +
+  scale_color_manual(values = rep(c("#FDAE61", "#A6D96A"), 80)) +
+  
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 1.5)) +     # remove space between plot area and x axis
+  scale_x_continuous(breaks=seq(0, 1100000000, 100000000)) +
+  
+  # Custom the theme:
+  theme_bw() +
+  theme( 
+    legend.position="none",
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+ggsave("../realignment/snpeff/stats/nonsyn_distribution_kaka.png", width=8, height=4, dpi=300)
+```
+
+I can see the same big outlier in the exact same position in both species, I wonder if it is a particularly gene-rich area? Maybe it is the MHC area? Because these sets came from the post-filtering for SNPs present in both species. All other outliers look like they are in similar areas but not quite exactly in the same spot like that one. I will need to put these two one after the other in one figure, with the same scale on both.
+
+Now I want to make a different kind of plot for the heterozygosity stats. 
+It has to be a plot of the frequency of windows densities.
+Importing the data.
+
+```{r}
+read.table("../realignment/snpeff/stats/kea_hetonly.snpden", header = TRUE) -> kea_het
+read.table("../realignment/snpeff/stats/FT3860_hetonly.snpden", header = TRUE) -> NI_kaka_het
+read.table("../realignment/snpeff/stats/FT3920_hetonly.snpden", header = TRUE) -> SI_kaka_het
+```
+
+I think this is the kind of plot where you have only one variable (the snp density here) and the frequency of that varible is what goes in the y axis. Let's try to plot kea.
+
+```{r}
+ggplot(kea_het, aes(VARIANTS.KB)) +
+  
+  geom_freqpoly() +
+
+    # Custom theme:
+  theme_bw() +
+  theme( 
+    legend.position="none",
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+```
+
+Does not look great. I think I need to fix the data a bit: the plot from Zhan et al (2013), which is where I got the idea, does a percentage of windows for the frequency and the SNP density is also in percentage, rather than SNPs per Kb.
+I will also need to have the data for the 3 individuals on the same plot. 
+
+```{r}
+kea_het  %>% mutate(perc=SNP_COUNT/500) -> kea_het
+NI_kaka_het %>% mutate(perc=SNP_COUNT/500) -> NI_kaka_het
+SI_kaka_het %>% mutate(perc=SNP_COUNT/500) -> SI_kaka_het
+```
+
+I can't just join the data like this, because the number of windows is different: I guess becauce not all of the small contigs actually had snps, so they would be windows that got lost...I don't know if I actually want to include them, since they will rarely be 50kb long and will be skewing my percentages down. I should probably filter windows that are present in all three individuals, with an inner join?
+
+```{r}
+all <- inner_join(kea_het, NI_kaka_het, by = c("CHROM","BIN_START"), suffix = c(".kea", ".NI_KAKA"))
+all <- inner_join(all, SI_kaka_het, by = c("CHROM","BIN_START"))
+dplyr::filter(all, grepl('ps', CHROM)) -> all
+all_perc <- tibble(all$perc.kea, all$perc.NI_KAKA, all$perc)
+colnames(all_perc) <- c("KEA", "NI_KAKA", "SI_KAKA")
+```
+
+Can I try plotting this now?
+
+```{r}
+ggplot(all_perc, aes(y = (..count..)/sum(..count..))) +
+  
+  geom_freqpoly(aes(x=KEA), binwidth = 0.01) +
+  geom_freqpoly(aes(x=NI_KAKA), binwidth = 0.01) +
+  geom_freqpoly(aes(x=SI_KAKA), binwidth = 0.01) +
+
+    # Custom the theme:
+  theme_bw() +
+  theme( 
+    legend.position="none",
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+```
+
+Looking much better, only some tweaking necessary now.
+
+```{r}
+all_perc <- tibble(all$CHROM, all$BIN_START, all$perc.kea, all$perc.NI_KAKA, all$perc)
+colnames(all_perc) <- c("CHROM","BIN_START", "KEA", "NI_KAKA", "SI_KAKA")
+fixed <- melt(all_perc, id=c("CHROM", "BIN_START"))
+
+ggplot(fixed, aes(x=value, colour=variable)) +
+  geom_line(stat="count", aes(y=..prop..*100), size = 1) +
+  # fix colours
+  scale_color_manual(values=c("#A6D96A", "#FDAE61", "#F46D43")) +
+  # fix axes
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_continuous(expand = c(0, 0), breaks =seq(0,1,0.1)) + 
+  coord_cartesian(xlim = c(0,0.6)) +
+  labs(x="SNP Density (%)", y="50Kbp windows (%)") +
+    # Custom theme:
+  theme_bw() +
+  theme( 
+    legend.position=c(0.90, 0.95),
+    legend.text = element_text(size=10),
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+ggsave("../realignment/snpeff/stats/het_windows_normal.png", width=8, height=4, dpi=300)
+```
+
+It looks like there is a much higher percentage of windows with 0 SNPs in Kea, followed by SI Kaka. Other than that, it appears that the two Kaka have similar rates of heterozigosity across windows, so I would say that het SNPs are distributed fairly evenly across the genome. That does not seem to be the case for Kea. I have to try and fix the log distribution thing, to see what the plot actually looks like when compared to the ones in papers.
+
+```{r message=FALSE, warning=FALSE}
+ggplot(fixed, aes(x=value, colour=variable)) +
+  # fix shape of the line
+  geom_line(stat="count", aes(y=..prop..*100), size = 1) +
+  # fix colours
+  scale_color_manual(values=c("#A6D96A", "#FDAE61", "#F46D43")) +
+  # fix axes
+  scale_y_continuous(expand = c(0,0)) +
+  scale_x_log10(expand = c(0.001,0)) +
+  coord_cartesian(xlim = c(0.001,1)) +
+  labs(x="SNP Density (%)", y="50Kbp windows (%)") +
+    # Custom theme:
+  theme_bw() +
+  theme( 
+    legend.position=c(0.90, 0.95),
+    legend.text = element_text(size=10),
+    panel.border = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+ggsave("../realignment/snpeff/stats/het_windows_log.png", width=8, height=4, dpi=300)
+```
