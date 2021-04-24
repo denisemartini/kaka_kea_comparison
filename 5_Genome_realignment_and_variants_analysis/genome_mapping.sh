@@ -1,29 +1,41 @@
-# 08.02.18, Denise
-# adapting pipelines to realign whole genomes.
+# Denise Martini
+# Pipeline to realign whole genomes using BWA/SAMtools/Picard tools
+# This is meant to be run on samples/individuals that are associated with
+# multiple sets of paired-end sequence files. The script takes an argument that is
+# a line number from a 'filelist.txt' (this file needs to be in the directory where the script is run,
+# if in a different location this should be specified below, line 73).
+# An example of how 'filelist.txt' should look like is at lines 60-66.
+# To run the script on the files in the 2nd line of filelist.txt, run:
+# bash genome_mapping.sh 2
 
-
-module load BWA
-module load SAMtools
-module load picard
-
+# In case you are running this in a module-loading server type (e.g. NeSI):
+# module load BWA
+# module load SAMtools
+# module load picard
+# If using the lines above you can remove the variable sign ($) from $samtools and $bwa
+# in the rest of the script (not from $picard), and also comment out lines 30 and 31.
 
 # variables ##need to list here all of the files and directories that I am going to use
 # example to fill:
-ref=/nesi/nobackup/uoo02327/denise/Kea-Kaka_take2/realignment/N_meridionalis_pseudochr.fa
-datadir=/nesi/nobackup/uoo02327/denise/Kea-Kaka_take2/realignment/sequences/
-#next two lines are optional, they depend on the sample name, it can include only the extension of the sample files
-#but they are used below to get the correct sample name in the readgroup
+ref=/path/to/reference/file.fa
+datadir=/path/to/directory/containing/sequences/
+
+#next two lines are optional, they depend on the sample name, they can include only the extension of the sample files
+#but they are used below to get the correct sample name in the readgroup, so they should be adjusted
+#ex. this is set for files named as: 'indv2_lib1_lane4_R1_001.fastq'
 fq1=_R1_001.fastq
 fq2=_R2_001.fastq
 
 #the whole list needs to be in "" and the samples need to be separated by a white space
 platform="Illumina"
-picard=/opt/nesi/mahuika/picard/2.1.0/picard.jar
+picard=/path/to/picard.jar
+bwa=/path/to/bwa
+samtools=/path/to/samtools
 
 #index the reference fasta file
 if [ ! -e $ref.amb ]; then
 echo "Index file of reference does not exist: creating index with BWA"
-bwa index $ref
+$bwa index $ref
 else
 echo "BWA Index file found"
 fi
@@ -41,14 +53,27 @@ fi
 idxfile=${ref%.*}.fai
 if [ ! -e "$ref.fai" ]; then
 echo "Reference is not indexed: indexing with SAMTOOLS"
-samtools faidx $ref
+$samtools faidx $ref
 else
 echo "Index for reference file found"
 fi
 #####################################################
 
-samplist=$(awk "NR==$SLURM_ARRAY_TASK_ID" filelist.txt)
+# here you need a 'filelist.txt' which has every file associated with the same sample
+# (e.g. from different lanes, or libraries) in a single line, white-space separated,
+# one sample per line, example:
+###
+# indv1_file1 indv1_file2 indv1_file3
+# indv2_lib1_lane4 indv2_lib1_lane5 indv2_lib2_lane4 indv2_lib2_lane5
+# indv3_lib1_lane4 indv3_lib1_lane5 indv3_lib2_lane4 indv3_lib2_lane5
+###
+# when running this as an array job on a server (e.g. with a SLURM scheduler):
+# samplist=$(awk "NR==$SLURM_ARRAY_TASK_ID" filelist.txt)
+# otherwise the line number is provided as an argument to the script:
+samplist=$(awk "NR==$1" filelist.txt)
 
+# this section works through each of the white-space separated files (samp) in the
+# chosen line of 'filelist.txt'
 for samp in $samplist
 
 do
@@ -76,10 +101,13 @@ instrumentrun=`echo $infoline | cut -d ':' -f2`
 flowcell=`echo $infoline | cut -d ':' -f3`
 lane=`echo $infoline | cut -d ':' -f4`
 index=`echo $infoline | cut -d ':' -f10`
-##the next two lines come from the sample name itself (sample and library in my case)
+
+##the next two lines come from the names of files in 'filelist.txt' (sample_library here)
+##they should be fixed to reflect whatever the user's 'filelist.txt' looks like
 sampname=`echo $samp | cut -d '_' -f1`
 library=`echo $samp | cut -d '_' -f2`
-#work that info into some
+
+#work that info into some read group identifiers:
 rgid="ID:${instrument}_${instrumentrun}_${flowcell}_${lane}_${index}"
 rgpl="PL:${platform}"
 rgpu="PU:${flowcell}.${lane}"
@@ -107,7 +135,7 @@ echo "Finished processing $samp"
 done
 ##############################
 
-#merge bam files for same sample
+#merge bam files for same sample (merge files from the same line of 'filelist.txt')
 
 echo "processing $sampname"
 
@@ -119,7 +147,7 @@ cd ${sampname}_process/
 
 echo "merging $sampname"
 ls *.bam > bamlist
-samtools merge -f ${sampname}_fastqtosam.bam -b bamlist
+$samtools merge -f ${sampname}_fastqtosam.bam -b bamlist
 
 
 echo "sorting $sampname"
@@ -161,11 +189,11 @@ rm ${sampname}_markilluminaadapters.bam
 
 #Getting stats for the alignment
 echo "Getting stats for $sampname"
-samtools stats ${sampname}_piped.bam > ${sampname}_samtools_stats.txt
+$samtools stats ${sampname}_piped.bam > ${sampname}_samtools_stats.txt
 
 echo "Finished alignment $sampname"
 
-# sorting .bam file and moving it out
+# sorting .bam file
 echo "Sorting BAM file for $sampname"
 java -jar $picard SortSam \
 I=${sampname}_piped.bam \
